@@ -1,0 +1,47 @@
+ARG NODE_VERSION=24
+
+# Stage 1: Build
+FROM node:${NODE_VERSION}-alpine AS builder
+
+ARG NITRO_PRESET
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
+ARG SENTRY_AUTH_TOKEN
+ARG SENTRY_UPLOAD_SOURCE_MAPS=true
+
+ENV NITRO_PRESET=${NITRO_PRESET} \
+    SENTRY_ORG=${SENTRY_ORG} \
+    SENTRY_PROJECT=${SENTRY_PROJECT} \
+    SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN} \
+    SENTRY_UPLOAD_SOURCE_MAPS=${SENTRY_UPLOAD_SOURCE_MAPS}
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+RUN corepack enable && pnpm install --frozen-lockfile
+
+COPY . .
+
+RUN pnpm run build
+
+# Stage 2: Production
+FROM node:${NODE_VERSION}-alpine AS production
+
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+RUN apk add --no-cache tini
+
+# Nuxt/Nitro bundles all dependencies, so node_modules is not needed
+COPY --from=builder --chown=node:node /app/.output ./.output
+
+USER node
+
+EXPOSE 3000
+
+HEALTHCHECK CMD wget --no-verbose --spider http://127.0.0.1:3000/ || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", ".output/server/index.mjs"]
